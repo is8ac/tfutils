@@ -13,7 +13,7 @@ import (
 const urlBase = "http://yann.lecun.com/exdb/mnist/"
 
 // BasePath is the dir to which mnist data is looked for and saved
-const BasePath = "/home/isaac/temp/mnist/"
+const BasePath = "mnist/"
 
 func downloadData(name string) (err error) {
 	if _, fsErr := os.Stat(BasePath + name); !os.IsNotExist(fsErr) {

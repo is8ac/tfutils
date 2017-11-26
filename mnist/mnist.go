@@ -1,6 +1,7 @@
 package mnist
 
 import (
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,12 +32,12 @@ func downloadData(name string) (err error) {
 	if err != nil {
 		return
 	}
-	//gz, err := gzip.NewReader(resp.Body)
-	//if err != nil {
-	//	return err
-	//}
-	//defer gz.Close()
-	_, err = io.Copy(file, resp.Body)
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	_, err = io.Copy(file, gz)
 	if err != nil {
 		return
 	}
@@ -65,26 +66,26 @@ func Download() (err error) {
 }
 
 // LabelsTest returns an op to load the mnist test labels from a file as [10000] uint8
-func LabelsTest(s *op.Scope, path string) (labels tf.Output) {
-	labels = loadLabels(s.SubScope("mnist_labels_test"), path, 10000)
+func LabelsTest(s *op.Scope) (labels tf.Output) {
+	labels = loadLabels(s.SubScope("mnist_labels_test"), "t10k-labels-idx1-ubyte", 10000)
 	return
 }
 
 // LabelsTrain returns an op to load the mnist training labels from a file as [60000] uint8
-func LabelsTrain(s *op.Scope, path string) (labels tf.Output) {
-	labels = loadLabels(s.SubScope("mnist_labels_train"), path, 60000)
+func LabelsTrain(s *op.Scope) (labels tf.Output) {
+	labels = loadLabels(s.SubScope("mnist_labels_train"), "train-labels-idx1-ubyte", 60000)
 	return
 }
 
 // ImagesTest returns an op to load the mnist training images from a file as [60000, 28, 28] uint8
-func ImagesTest(s *op.Scope, path string) (labels tf.Output) {
-	labels = loadImages(s.SubScope("mnist_images_test"), path, 10000)
+func ImagesTest(s *op.Scope) (labels tf.Output) {
+	labels = loadImages(s.SubScope("mnist_images_test"), "t10k-images-idx3-ubyte", 10000)
 	return
 }
 
 // ImagesTrain returns an op to load the mnist training images from a file as [60000, 28, 28] uint8
-func ImagesTrain(s *op.Scope, path string) (labels tf.Output) {
-	labels = loadImages(s.SubScope("mnist_images_train"), path, 60000)
+func ImagesTrain(s *op.Scope) (labels tf.Output) {
+	labels = loadImages(s.SubScope("mnist_images_train"), "train-images-idx3-ubyte", 60000)
 	return
 }
 

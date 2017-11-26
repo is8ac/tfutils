@@ -17,7 +17,7 @@ func TestDownloadData(t *testing.T) {
 
 func TestLabelsTest(t *testing.T) {
 	s := op.NewScope()
-	testLabels := LabelsTest(s, BasePath+"t10k-labels.idx1-ubyte")
+	testLabels := LabelsTest(s)
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestLabelsTest(t *testing.T) {
 
 func TestLabelsTrain(t *testing.T) {
 	s := op.NewScope()
-	testLabels := LabelsTrain(s, BasePath+"train-labels.idx1-ubyte")
+	testLabels := LabelsTrain(s)
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestLabelsTrain(t *testing.T) {
 
 func TestImagesTrain(t *testing.T) {
 	s := op.NewScope()
-	testLabels := ImagesTrain(s, BasePath+"train-images.idx3-ubyte")
+	testLabels := ImagesTrain(s)
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -92,7 +92,7 @@ func TestImagesTrain(t *testing.T) {
 
 func TestImagesTest(t *testing.T) {
 	s := op.NewScope()
-	testLabels := ImagesTrain(s, BasePath+"t10k-images.idx3-ubyte")
+	testLabels := ImagesTest(s)
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)

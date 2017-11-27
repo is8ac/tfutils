@@ -109,10 +109,25 @@ func loadImages(s *op.Scope, name string, size int32) (labels tf.Output) {
 		op.Const(s.SubScope("begin"), []int32{int32(16)}),
 		op.Const(s.SubScope("size"), []int32{size * 28 * 28}),
 	)
-	fmt.Println("trimHeader:", trimHeader.Shape())
 	labels = op.Reshape(s, trimHeader,
 		op.Const(s.SubScope("target_shape"),
 			[]int32{size, int32(28), int32(28)},
 		))
+	return
+}
+
+// TrainingQueue returns a queue of label - image pairs.
+// You must run the enqueue OP at least once before using queue output.
+func TrainingQueue(s *op.Scope) (label, image tf.Output, enqueue *tf.Operation) {
+	trainLabels := LabelsTrain(s)
+	trainImages := ImagesTrain(s)
+	dataType := []tf.DataType{tf.Uint8, tf.Uint8}
+	//dataShapes := []tf.Shape{tf.ScalarShape(), tf.MakeShape(28, 28)}
+	//queue := op.FIFOQueueV2(s, dataType, op.FIFOQueueV2Shapes(dataShapes))
+	queue := op.RandomShuffleQueueV2(s, dataType)
+	enqueue = op.QueueEnqueueManyV2(s, queue, []tf.Output{trainLabels, trainImages})
+	components := op.QueueDequeueV2(s, queue, dataType)
+	label = components[0]
+	image = components[1]
 	return
 }

@@ -115,3 +115,32 @@ func TestImagesTest(t *testing.T) {
 		t.Fatal("wrong size")
 	}
 }
+
+func TestTrainQueue(t *testing.T) {
+	s := op.NewScope()
+	labels, images, enqueue := TrainingQueue(s)
+	graph, err := s.Finalize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess, err := tf.NewSession(graph, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = sess.Run(nil, nil, []*tf.Operation{enqueue})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := sess.Run(nil, []tf.Output{labels, images}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	labelsShape := results[0].Shape()
+	imagesShape := results[1].Shape()
+	if len(labelsShape) != 0 {
+		t.Fatal("wrong labels dim:", labelsShape)
+	}
+	if imagesShape[0] != 28 {
+		t.Fatal("wrong images batch size")
+	}
+}

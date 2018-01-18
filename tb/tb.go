@@ -47,3 +47,42 @@ func WriteGraphSummary(g *tf.Graph, logDir string) (err error) {
 	}
 	return
 }
+
+// LogOP can be called to create a SummaryWriter for some part of a graph.
+type LogOP struct {
+	Name   string
+	OPfunc func(s *op.Scope, writer tf.Output, tag tf.Output, step tf.Output) (writerOP *tf.Operation)
+}
+
+// MakeHistLogOP creates a LogOP struct for a HistogramSummary TensorBoard writer.
+func MakeHistLogOP(values tf.Output, name string) LogOP {
+	return LogOP{
+		Name: name,
+		OPfunc: func(s *op.Scope, writer tf.Output, tag tf.Output, step tf.Output) (writerOP *tf.Operation) {
+			return op.WriteHistogramSummary(s, writer, step, tag, values)
+		},
+	}
+}
+
+func touint8(s *op.Scope, floatVal tf.Output) tf.Output {
+	uint8Max := op.Const(s, float32(255))
+	return op.Cast(s, op.Minimum(s, op.Mul(s, floatVal, uint8Max), uint8Max), tf.Uint8)
+}
+
+// MakePlusMinusOneImageLogOP creates a LogOP struct for a ImageSummary TensorBoard writer.
+// It assumes that the input is a float 2d tensor between -1 and 1.
+func MakePlusMinusOneImageLogOP(data tf.Output, name string) LogOP {
+	return LogOP{
+		Name: name,
+		OPfunc: func(s *op.Scope, writer tf.Output, tag tf.Output, step tf.Output) (writeImage *tf.Operation) {
+			zero := op.Const(s.SubScope("zero"), float32(0))
+			pos := touint8(s.SubScope("pos"), op.Maximum(s, zero, data))
+			neg := touint8(s.SubScope("neg"), op.Abs(s, op.Minimum(s, zero, data)))
+			zeros := op.Fill(s, op.Shape(s, pos), op.Const(s.SubScope("uint80"), uint8(0)))
+			image := op.Pack(s, []tf.Output{neg, pos, zeros}, op.PackAxis(2))
+			images := op.ExpandDims(s, image, op.Const(s.SubScope("expand_dim"), int32(0)))
+			writeImage = op.WriteImageSummary(s, writer, step, tag, images, op.Const(s.SubScope("bad_color"), []uint8{0, 0, 0}))
+			return
+		},
+	}
+}

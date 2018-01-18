@@ -1,40 +1,67 @@
 package es
 
 import (
-	"fmt"
 	"testing"
 
-	"github.com/is8ac/tfutils/mnist"
+	"github.com/is8ac/tfutils"
+	"github.com/is8ac/tfutils/tb"
 	tf "github.com/tensorflow/tensorflow/tensorflow/go"
 	"github.com/tensorflow/tensorflow/tensorflow/go/op"
 )
 
+func nilPerturb(s *op.Scope, input tf.Output, numOutputs tf.Output, generation tf.Output, globalSeed int64) func(*op.Scope, tf.Output) tf.Output {
+	return func(subS *op.Scope, index tf.Output) (output tf.Output) {
+		output = input
+		return
+	}
+}
+
+func nilLoss(s *op.Scope, actual, target tf.Output) (loss tf.Output) {
+	loss = op.Const(s, float32(0))
+	return
+}
+
 func TestNewSession(t *testing.T) {
-	const seed int64 = 42
-	const numChildren int = 10
-	const batchSize int64 = 1000
-	err := mnist.Download()
-	if err != nil {
-		panic(err)
+	model := ModelDef{
+		ParamDefs: []ParamDef{
+			ParamDef{Name: "weights", ZeroVal: tfutils.Zero(tf.Float), Shape: tf.ScalarShape(), PerturbFunc: nilPerturb},
+		},
+		Model: func(s *op.Scope, params []tf.Output, input tf.Output) (output tf.Output, _ []tb.LogOP) {
+			output = input
+			return
+		},
 	}
 	s := op.NewScope()
-
-	labels, images, init := mnist.NextBatch(s.SubScope("next_batch"), batchSize, seed)
-	initTestLabels, testLabels := varCache(s.SubScope("testLabels"), mnist.LabelsTest(s), "test_labels")
-	initTestImages, testImages := varCache(s.SubScope("testImages"), mnist.FlattenImages(s.SubScope("flatten_images"), mnist.ImagesTest(s)), "test_images")
-	initOPs := []*tf.Operation{
-		init,
-		initTestLabels,
-		initTestImages,
-	}
-	esSess, err := NewSession(s.SubScope("main"), SingleLayerNN(28*28, 10), softmaxSqrDifLoss, PercentAccuracy, images, labels, testImages, testLabels, initOPs, numChildren, seed)
+	inputs := op.Const(s.SubScope("inputs"), [][]float32{[]float32{1, 2}, []float32{3, 4}})
+	targets := op.Const(s.SubScope("targets"), [][]float32{[]float32{0, 1}, []float32{1, 0}})
+	esSess, err := NewSession(s.SubScope("main"), model, nilLoss, nilLoss, inputs, targets, inputs, targets, nil, 3, 42, "tb_logs", "test")
 	if err != nil {
 		panic(err)
 	}
-	//esSess.WriteTBgraph("tb_logs/graphs")
-	for i := 0; i < 10; i++ {
-		bestIndex := esSess.BestIndex()
-		esSess.Perturb(bestIndex)
+	bestIndex, err := esSess.BestIndex()
+	if err != nil {
+		t.Fatal(err)
 	}
-	fmt.Println(esSess.Accuracy())
+	err = esSess.Perturb(bestIndex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = esSess.Accuracy(false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = esSess.Accuracy(true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = esSess.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s2 := op.NewScope()
+	frozenInput := op.Const(s2.SubScope("inputs"), [][]float32{[]float32{1, 2}, []float32{3, 4}})
+	_, err = esSess.Freeze(s2, frozenInput)
+	if err != nil {
+		t.Fatal(err)
+	}
 }

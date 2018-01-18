@@ -67,27 +67,40 @@ func Download() (err error) {
 	return
 }
 
-// FlattenImages turns int8 image of shape [?, 28, 28] into float32 [?, 784]
-func FlattenImages(s *op.Scope, intImages tf.Output) (flatenedFloats tf.Output) {
-	flatenedFloats = op.Div(s,
-		op.Cast(s,
-			op.Reshape(s, intImages, op.Const(s.SubScope("shape"), []int64{-1, 28 * 28})),
-			tf.Float,
-		),
-		op.Const(s.SubScope("255"), float32(255)),
-	)
+// FlattenImages turns a tensor of shape [?, 28, 28] into a tensor of shape [?, 784], and same shape
+func FlattenImages(s *op.Scope, intImages tf.Output) (flattened tf.Output) {
+	flattened = op.Reshape(s, intImages, op.Const(s.SubScope("shape"), []int64{-1, 28 * 28}))
 	return
 }
 
-// OneHotLabels converts int labels to oneHot encoded float arrays
-func OneHotLabels(s *op.Scope, intLabels tf.Output) (oneHot tf.Output) {
-	oneHot = op.OneHot(s,
-		intLabels,
-		op.Const(s.SubScope("depth"), int32(10)),
-		op.Const(s.SubScope("1"), float32(1)),
-		op.Const(s.SubScope("0"), float32(0)),
-	)
-	return
+func makeConst(s *op.Scope, DstT tf.DataType, value float32) tf.Output {
+	return op.Cast(s, op.Const(s, value), DstT)
+}
+
+// InitCastImages turns int8 from 0-255, to dType type from 0-1 of same shape.
+func InitCastImages(DstT tf.DataType) func(*op.Scope, tf.Output) tf.Output {
+	return func(s *op.Scope, intImages tf.Output) (floats tf.Output) {
+		floats = op.Div(s,
+			op.Cast(s, intImages, DstT),
+			makeConst(s.SubScope("255"), DstT, float32(255)),
+		)
+		return
+	}
+}
+
+// InitOneHotLabels converts int labels to oneHot encoded float arrays
+func InitOneHotLabels(DstT tf.DataType) func(s *op.Scope, intLabels tf.Output) tf.Output {
+	return func(s *op.Scope, intLabels tf.Output) (oneHot tf.Output) {
+		one := makeConst(s.SubScope("one"), DstT, 1)
+		zero := makeConst(s.SubScope("zero"), DstT, 0)
+		oneHot = op.OneHot(s,
+			intLabels,
+			op.Const(s.SubScope("depth"), int32(10)),
+			one,
+			zero,
+		)
+		return
+	}
 }
 
 // LabelsTest returns an op to load the mnist test labels from a file as [10000] uint8
@@ -169,49 +182,33 @@ func TrainingQueue(s *op.Scope) (label, image tf.Output, enqueue *tf.Operation) 
 
 // NextBatch returns a data set of random minibatches of size n of pairs of labels and images.
 // It is equivalent to mnist.train.next_batch(n) in the python mnist lib.
-// Images are [784] floats.
+// imagesTransform transforms images. If nil, float32 28x28 are returned.
+// labelsTransform transforms labels. If nil, onehot floats are returned.
 // Deterministic if seed is non 0. If 0, random seed is used.
-func NextBatch(s *op.Scope, n int64, seed int64) (batchLabels, batchImages tf.Output, init *tf.Operation) {
+func NextBatch(s *op.Scope, imagesTransform, labelsTransform func(*op.Scope, tf.Output) tf.Output, n int64, seed int64) (batchImages, batchLabels tf.Output, init *tf.Operation) {
+	if imagesTransform == nil {
+		imagesTransform = InitCastImages(tf.Float)
+	}
+	if labelsTransform == nil {
+		labelsTransform = InitOneHotLabels(tf.Float)
+	}
+	images := imagesTransform(s, ImagesTrain(s))
+	labels := labelsTransform(s, LabelsTrain(s))
+	labelsShape, err := labels.Shape().ToSlice()
+	if err != nil {
+		panic(err)
+	}
+	imagesShape, err := images.Shape().ToSlice()
+	if err != nil {
+		panic(err)
+	}
+	imagesShape[0] = n
+	labelsShape[0] = n
+	outputTypes := []tf.DataType{images.DataType(), labels.DataType()}
+	outputShapes := []tf.Shape{tf.MakeShape(imagesShape...), tf.MakeShape(labelsShape...)}
+	preBatchOutputShapes := []tf.Shape{tf.MakeShape(imagesShape[1:]...), tf.MakeShape(labelsShape[1:]...)}
 	seedOutput := op.Const(s, seed)
-	outputTypes := []tf.DataType{tf.Float, tf.Float}
-	outputShapes := []tf.Shape{tf.MakeShape(n, 10), tf.MakeShape(n, 28*28)}
-	preBatchOutputShapes := []tf.Shape{tf.ScalarShape(), tf.MakeShape(28 * 28)}
-	labels := OneHotLabels(s, LabelsTrain(s))
-	images := FlattenImages(s, ImagesTrain(s))
-	dataset := op.TensorSliceDataset(s, []tf.Output{labels, images}, preBatchOutputShapes)
-	repeatDataset := op.RepeatDataset(s, dataset, op.Const(s.SubScope("count"), int64(-1)), outputTypes, preBatchOutputShapes)
-	shuffleDataset := op.ShuffleDataset(s,
-		repeatDataset,
-		op.Const(s.SubScope("buffer_size"), int64(100000)),
-		seedOutput,
-		seedOutput,
-		outputTypes,
-		preBatchOutputShapes,
-	)
-	batchDataset := op.BatchDataset(s, shuffleDataset, op.Const(s.SubScope("batch_size"), n), outputTypes, outputShapes)
-	iterator := op.Iterator(s, "", "", outputTypes, outputShapes)
-	next := op.IteratorGetNext(s, iterator, outputTypes, outputShapes)
-	init = op.MakeIterator(s, batchDataset, iterator)
-	batchLabels = next[0]
-	batchImages = next[1]
-	return
-}
-
-// QuantizedNextBatch returns a data set of random minibatches of size n of pairs of labels and images.
-// It is equivalent to mnist.train.next_batch(n) in the python mnist lib.
-// Images are [784] quints.
-// Deterministic if seed is non 0. If 0, random seed is used.
-func QuantizedNextBatch(s *op.Scope, n int64, seed int64) (batchLabels, batchImages quant.Output, init *tf.Operation) {
-	seedOutput := op.Const(s, seed)
-	outputTypes := []tf.DataType{tf.Quint8, tf.Quint8}
-	outputShapes := []tf.Shape{tf.MakeShape(n, 10), tf.MakeShape(n, 28*28)}
-	preBatchOutputShapes := []tf.Shape{tf.ScalarShape(), tf.MakeShape(28 * 28)}
-	labels := OneHotLabels(s, LabelsTrain(s))
-	images := FlattenImages(s, ImagesTrain(s))
-
-	qImages := Quantize01Floats(s.SubScope("images"), images)
-	qLabels := Quantize01Floats(s.SubScope("labels"), labels)
-	dataset := op.TensorSliceDataset(s, []tf.Output{qLabels.Output, qImages.Output}, preBatchOutputShapes)
+	dataset := op.TensorSliceDataset(s, []tf.Output{images, labels}, preBatchOutputShapes)
 	repeatDataset := op.RepeatDataset(s, dataset, op.Const(s.SubScope("count"), int64(-1)), outputTypes, preBatchOutputShapes)
 	shuffleDataset := op.ShuffleDataset(s,
 		repeatDataset,
@@ -225,7 +222,7 @@ func QuantizedNextBatch(s *op.Scope, n int64, seed int64) (batchLabels, batchIma
 	iterator := op.Iterator(s, "", "", outputTypes, outputShapes)
 	next := op.IteratorGetNext(s, iterator, outputTypes, outputShapes)
 	init = op.MakeIterator(s, batchDataset, iterator)
-	batchLabels = quant.Wrap(next[0], qLabels.Min, qLabels.Max)
-	batchImages = quant.Wrap(next[1], qImages.Min, qImages.Max)
+	batchImages = next[0]
+	batchLabels = next[1]
 	return
 }

@@ -1,3 +1,4 @@
+// Package es provides tools to optimize the parameters of arbitrary tensorflow graphs via evolutionary strategy.
 package es
 
 import (
@@ -8,111 +9,42 @@ import (
 	"github.com/tensorflow/tensorflow/tensorflow/go/op"
 )
 
+//IDEA: Average perturbations weighted by loss.
+
 // PerturbFunc takes an output and a base seed, and returns a function which returns perturbed version of the output
 type PerturbFunc func(s *op.Scope, input tf.Output, numOutputs tf.Output, generation tf.Output, globalSeed int64) func(*op.Scope, tf.Output) tf.Output
 
-// VarDef defines a shape and name
-type VarDef struct {
-	Name        string      // Name must be unique
-	DataType    tf.DataType // DataType, for now just tf.Float
-	Shape       tf.Shape    // Shape is the shape of the var
-	PerturbFunc PerturbFunc // func to perturb the var
+// ParamDef defines a shape and name
+type ParamDef struct {
+	Name        string                    // Name must be unique
+	ZeroVal     func(*op.Scope) tf.Output // func to make a scalar zero of whatever data Type
+	Shape       tf.Shape                  // Shape is the shape of the var
+	PerturbFunc PerturbFunc               // func to perturb the var
 }
 
 // ModelDef defines a model
 type ModelDef struct {
-	VarDefs []VarDef                                          // The list of shapes of vars that the child wants
-	Model   func(*op.Scope, []tf.Output, tf.Output) tf.Output // Child takes a slice of vars, some inputs and outputs, and returns a loss.
-}
-
-// SingleLayerNN create a modelDef for a single layer nn.
-func SingleLayerNN(inputSize, outputSize int64) (model ModelDef) {
-	model.VarDefs = []VarDef{
-		VarDef{Name: "weights", DataType: tf.Float, Shape: tf.MakeShape(inputSize, outputSize), PerturbFunc: MakeSlicePerturb(0.003)},
-		VarDef{Name: "biases", DataType: tf.Float, Shape: tf.MakeShape(outputSize), PerturbFunc: MakeSlicePerturb(0.003)},
-	}
-
-	model.Model = func(s *op.Scope, vars []tf.Output, images tf.Output) (output tf.Output) {
-		output = op.Add(s, vars[1], op.MatMul(s, images, vars[0]))
-		return
-	}
-	return
-}
-
-// DummyModel is dummy
-func DummyModel(outputSize int64) (model ModelDef) {
-	model.VarDefs = []VarDef{
-		VarDef{Name: "biases", DataType: tf.Float, Shape: tf.MakeShape(outputSize), PerturbFunc: IncPerturb},
-	}
-	model.Model = func(s *op.Scope, vars []tf.Output, images tf.Output) (output tf.Output) {
-		output = op.Tile(s, op.ExpandDims(s, vars[0], op.Const(s.SubScope("dims"), int32(0))), op.Const(s, []int32{10000, 1}))
-		return
-	}
-	return
-}
-
-func varCache(s *op.Scope, input tf.Output, name string) (init *tf.Operation, output tf.Output) {
-	variable := op.VarHandleOp(s, input.DataType(), input.Shape(), op.VarHandleOpSharedName(name))
-	init = op.AssignVariableOp(s, variable, input)
-	output = op.ReadVariableOp(s, variable, input.DataType())
-	return
-}
-
-// MakeSlicePerturb makes a PerturbFunc which uses a slice of a single tensor. Better performance.
-func MakeSlicePerturb(stdev float32) PerturbFunc {
-	return func(s *op.Scope, input tf.Output, numOutputs tf.Output, generation tf.Output, globalSeed int64) func(*op.Scope, tf.Output) tf.Output {
-		inputShape := op.Shape(s.SubScope("input"), input, op.ShapeOutType(tf.Int32))
-		noiseShape := op.Add(s.SubScope("shape"), inputShape, numOutputs)
-		seed := op.Pack(s, []tf.Output{generation, op.Const(s.SubScope("seed"), globalSeed)})
-		oneNoise := op.StatelessRandomNormal(s, noiseShape, seed)
-		noise := op.Mul(s, oneNoise, op.Const(s.SubScope("stdev"), stdev))
-		return func(subS *op.Scope, index tf.Output) (output tf.Output) {
-			begin := op.Fill(subS.SubScope("size"), op.Shape(subS.SubScope("dims"), inputShape, op.ShapeOutType(tf.Int32)), index)
-			noiseSlice := op.Slice(subS, noise, begin, inputShape)
-			output = op.Add(subS, input, noiseSlice)
-			return
-		}
-	}
-}
-
-// MakeSimplePerturb is a PerturbFunc which uses generation and index as seeds.
-func MakeSimplePerturb(stdev float32) PerturbFunc {
-	return func(s *op.Scope, input tf.Output, numOutputs tf.Output, generation tf.Output, globalSeed int64) func(*op.Scope, tf.Output) tf.Output {
-		inputShape := op.Shape(s.SubScope("input"), input, op.ShapeOutType(tf.Int32))
-		return func(subS *op.Scope, index tf.Output) (output tf.Output) {
-			seed := op.Pack(subS, []tf.Output{
-				generation,
-				op.Cast(subS, index, tf.Int64),
-			})
-			noise := op.StatelessRandomNormal(subS, inputShape, seed)
-			output = op.Add(subS, input, noise)
-			return
-		}
-	}
-}
-
-// IncPerturb is a PerturbFunc which increments the input by one.
-func IncPerturb(s *op.Scope, input tf.Output, numOutputs tf.Output, generation tf.Output, globalSeed int64) func(*op.Scope, tf.Output) tf.Output {
-	return func(subS *op.Scope, index tf.Output) (output tf.Output) {
-		inc := op.Cast(subS, index, tf.Float)
-		output = op.Add(subS, input, inc)
-		return
-	}
+	ParamDefs []ParamDef                                                                                   // The list of shapes of vars that the child wants
+	Model     func(s *op.Scope, params []tf.Output, inputs tf.Output) (output tf.Output, tbOPs []tb.LogOP) // Child takes a slice of vars, some inputs and outputs, and returns a loss.
 }
 
 // ESsess holds a training session.
 type ESsess struct {
-	sess                *tf.Session
-	graph               *tf.Graph
-	bestIndex           tf.Output
-	updateOPs           []*tf.Operation
-	indexes             []int32
-	indexPH             tf.Output
-	perturbFromIndex    []*tf.Operation
-	readGeneration      tf.Output
-	readVars            []tf.Output
-	incrementGeneration *tf.Operation
-	accuracy            tf.Output
+	sess                  *tf.Session
+	graph                 *tf.Graph
+	bestIndex             tf.Output
+	updateOPs             []*tf.Operation
+	indexes               []int32
+	indexPH               tf.Output
+	perturbFromIndex      []*tf.Operation
+	readGeneration        tf.Output
+	readVars              []tf.Output
+	incrementGeneration   *tf.Operation
+	accuracy              tf.Output
+	modelDef              ModelDef
+	modelSummaryWriterOps []*tf.Operation
+	accuracySummaryWriter *tf.Operation
+	closeSummaryWriter    *tf.Operation
 }
 
 // WriteTBgraph writes the graph to tensorboard
@@ -155,8 +87,8 @@ func (sess ESsess) ReadGeneration() (generation int64, err error) {
 	return
 }
 
-// ReadVars reads the value of the vars var from the graph.
-func (sess ESsess) ReadVars() (vars []*tf.Tensor, err error) {
+// ReadParams reads the value of the params variables from the graph.
+func (sess ESsess) ReadParams() (vars []*tf.Tensor, err error) {
 	vars, err = sess.sess.Run(
 		nil,
 		sess.readVars,
@@ -166,63 +98,90 @@ func (sess ESsess) ReadVars() (vars []*tf.Tensor, err error) {
 }
 
 // Freeze freezes a model with the current vars.
-func (sess ESsess) Freeze(s *op.Scope, input tf.Output) (result tf.Output) {
-	panic("not implemented")
+func (sess ESsess) Freeze(s *op.Scope, input tf.Output) (output tf.Output, err error) {
+	params, err := sess.ReadParams()
+	if err != nil {
+		return
+	}
+	if len(params) != len(sess.modelDef.ParamDefs) {
+		panic("len(params) != len(sess.modelDef.ParamDefs), This should never happen!!")
+	}
+	consts := make([]tf.Output, len(params))
+	for i, paramTensor := range params {
+		consts[i] = op.Const(s.SubScope(sess.modelDef.ParamDefs[i].Name), paramTensor)
+	}
+	output, _ = sess.modelDef.Model(s, consts, input)
 	return
 }
 
 // BestIndex each index and returns the index of the best.
-func (sess ESsess) BestIndex() (bestIndex int32) {
+func (sess ESsess) BestIndex() (bestIndex int32, err error) {
 	results, err := sess.sess.Run(
 		map[tf.Output]*tf.Tensor{},
 		[]tf.Output{sess.bestIndex},
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		return
 	}
 	bestIndex = results[0].Value().(int32)
 	return
 }
 
 // Accuracy on the test set.
-func (sess ESsess) Accuracy() (accuracy float32) {
+func (sess ESsess) Accuracy(logAcc, logModel bool) (accuracy float32, err error) {
+	var ops []*tf.Operation
+	if logAcc {
+		ops = append(ops, sess.accuracySummaryWriter)
+	}
+	if logModel {
+		ops = append(ops, sess.modelSummaryWriterOps...)
+	}
 	results, err := sess.sess.Run(
 		map[tf.Output]*tf.Tensor{},
 		[]tf.Output{sess.accuracy},
-		nil,
+		ops,
 	)
 	if err != nil {
-		panic(err)
+		return
 	}
 	accuracy = results[0].Value().(float32)
+	return
+}
+
+// Close the tf session and tensorboard logging cleanly.
+func (sess ESsess) Close() (err error) {
+	_, err = sess.sess.Run(
+		nil,
+		nil,
+		[]*tf.Operation{sess.closeSummaryWriter},
+	)
+	if err != nil {
+		return
+	}
+	//err = sess.Close()
 	return
 }
 
 // Accuracy calculates the accuracy of predictions
 type Accuracy func(s *op.Scope, actual, target tf.Output) (accuracy tf.Output)
 
-// PercentAccuracy calculates the percent of the predictions whoes top matches the targets.
-func PercentAccuracy(s *op.Scope, actual, target tf.Output) (accuracy tf.Output) {
-	actualLabels := op.Cast(s.SubScope("actual"), op.ArgMax(s, actual, op.Const(s.SubScope("argmax_dim"), int32(1)), op.ArgMaxOutputType(tf.Int32)), tf.Uint8)
-	correct := op.Equal(s, actualLabels, target)
-	accuracy = op.Mean(s, op.Cast(s.SubScope("accuracy"), correct, tf.Float), op.Const(s.SubScope("mean_dim"), int32(0)))
-	return
-}
-
 // Loss takes an actual and a target and returns a loss
 type Loss func(s *op.Scope, actual, target tf.Output) (loss tf.Output)
 
-func softmaxSqrDifLoss(s *op.Scope, actual, target tf.Output) (loss tf.Output) {
-	softmax := op.Softmax(s, actual)
-	sqrDiffs := op.SquaredDifference(s, softmax, target)
-	sums := op.Sum(s, sqrDiffs, op.Const(s, int32(1)))
-	loss = op.Mean(s, sums, op.Const(s.SubScope("mean_reduce_dims"), []int32{0}))
-	return
-}
-
 // NewSession creates a new ESsess. Takes ownership of and finalises scope.
-func NewSession(s *op.Scope, md ModelDef, lossFunc Loss, accuracyFunc Accuracy, inputs, targets, testInputs, testTargets tf.Output, initOPs []*tf.Operation, numChildren int, globalSeed int64) (esSess ESsess, err error) {
+func NewSession(s *op.Scope,
+	md ModelDef,
+	lossFunc Loss,
+	accuracyFunc Accuracy,
+	inputs, targets, testInputs, testTargets tf.Output,
+	initOPs []*tf.Operation,
+	numChildren int,
+	globalSeed int64,
+	tensorboardLogDir string,
+	runName string,
+) (esSess ESsess, err error) {
+	esSess.modelDef = md
 	esSess.indexPH = op.Placeholder(s.SubScope("index"), tf.Int32, op.PlaceholderShape(tf.ScalarShape())) // to be filled with the child index
 	generationScope := s.SubScope("generation")
 	generation := op.VarHandleOp(generationScope, tf.Int64, tf.ScalarShape(), op.VarHandleOpSharedName("generation"))                     // stores the generation
@@ -231,27 +190,26 @@ func NewSession(s *op.Scope, md ModelDef, lossFunc Loss, accuracyFunc Accuracy, 
 	esSess.incrementGeneration = op.AssignAddVariableOp(generationScope, generation, op.Const(generationScope.SubScope("one"), int64(1))) // increment the generation
 
 	// Now we create slices to hold various things for each var.
-	varCount := len(md.VarDefs)                                            // number of vars
+	varCount := len(md.ParamDefs)                                          // number of vars
 	vars := make([]tf.Output, varCount)                                    // handles to the actual variables
 	esSess.readVars = make([]tf.Output, varCount)                          // outputs to read the value of the variables
 	initVars := make([]*tf.Operation, varCount)                            // operations to initialise the variables with zeros
 	esSess.perturbFromIndex = make([]*tf.Operation, varCount)              // for perturbing according to a given index.
 	perturbFuncs := make([]func(*op.Scope, tf.Output) tf.Output, varCount) // funcs to perturb vars
 
-	zero := op.Const(s.SubScope("zero"), float32(0)) // a single float32 0 used to fill
-
 	numSlices := op.Const(s.SubScope("num_slices"), int32(numChildren))
 	// for each parameter
-	for i, vd := range md.VarDefs {
+	for i, vd := range md.ParamDefs {
 		varScope := s.SubScope(vd.Name)
+		zero := vd.ZeroVal(varScope.SubScope("zero"))
 		sliceShape, err := vd.Shape.ToSlice()
 		if err != nil {
 			panic(err)
 		}
 		zeroVar := op.Fill(varScope, op.Cast(varScope, op.Const(varScope, sliceShape), tf.Int32), zero)
-		vars[i] = op.VarHandleOp(varScope, vd.DataType, vd.Shape, op.VarHandleOpSharedName("foo_"+vd.Name))
+		vars[i] = op.VarHandleOp(varScope, zero.DataType(), vd.Shape, op.VarHandleOpSharedName("foo_"+vd.Name))
 		initVars[i] = op.AssignVariableOp(varScope, vars[i], zeroVar)
-		esSess.readVars[i] = op.ReadVariableOp(varScope, vars[i], vd.DataType)
+		esSess.readVars[i] = op.ReadVariableOp(varScope, vars[i], zero.DataType())
 		perturbFuncs[i] = vd.PerturbFunc(varScope.SubScope("tmp_perturb"), esSess.readVars[i], numSlices, esSess.readGeneration, globalSeed)
 		perturbedFromIndex := vd.PerturbFunc(varScope.SubScope("init_index_perturb"), esSess.readVars[i], numSlices, esSess.readGeneration, globalSeed)(varScope.SubScope("index_perturb"), esSess.indexPH)
 		esSess.perturbFromIndex[i] = op.AssignVariableOp(s.SubScope("perturb_index"), vars[i], perturbedFromIndex)
@@ -264,20 +222,40 @@ func NewSession(s *op.Scope, md ModelDef, lossFunc Loss, accuracyFunc Accuracy, 
 		index := op.Const(childScope.SubScope("index"), int32(childIndex))
 		perturbedVars := make([]tf.Output, len(perturbFuncs))
 		// for each var,
-		for i, varDef := range md.VarDefs {
-			perturbedVars[i] = perturbFuncs[i](childScope.SubScope(varDef.Name), index) // get the perturbFunc for that vars, and run it for that index
+		for i, ParamDef := range md.ParamDefs {
+			perturbedVars[i] = perturbFuncs[i](childScope.SubScope(ParamDef.Name), index) // get the perturbFunc for that vars, and run it for that index
 		}
-		actual := md.Model(childScope.SubScope("model"), perturbedVars, inputs)
+		actual, _ := md.Model(childScope.SubScope("model"), perturbedVars, inputs)
 		lossList[childIndex] = lossFunc(childScope.SubScope("loss"), actual, targets)
 	}
 
 	lossPop := op.Pack(s, lossList)
 	esSess.bestIndex = op.ArgMin(s, lossPop, op.Const(s.SubScope("argmin_dims"), int32(0)), op.ArgMinOutputType(tf.Int32))
 
-	// accurecy
+	// accuracy
+	writer := op.SummaryWriter(s, op.SummaryWriterSharedName("tb_logs"))
+	createSummaryWriter := op.CreateSummaryFileWriter(s,
+		writer,
+		op.Const(s.SubScope("log_dir"), tensorboardLogDir+"/"+runName),
+		op.Const(s.SubScope("max_queue"), int32(10)),
+		op.Const(s.SubScope("flush_millis"), int32(100)),
+		op.Const(s.SubScope("filename_suffix"), ".tblog"),
+	)
+	esSess.closeSummaryWriter = op.CloseSummaryWriter(s, writer)
+	tbs := s.SubScope("summaries")
+
 	testScope := s.SubScope("test")
-	testActual := md.Model(testScope.SubScope("model"), esSess.readVars, testInputs)
+	testActual, logOPs := md.Model(testScope.SubScope("model"), esSess.readVars, testInputs)
 	esSess.accuracy = accuracyFunc(testScope.SubScope("accurecy"), testActual, testTargets)
+	accuracyTag := op.Const(testScope.SubScope("summary_tag"), "accuracy")
+	esSess.accuracySummaryWriter = op.WriteScalarSummary(testScope, writer, esSess.readGeneration, accuracyTag, esSess.accuracy)
+
+	esSess.modelSummaryWriterOps = make([]*tf.Operation, len(logOPs))
+	for i, logOP := range logOPs {
+		ss := tbs.SubScope(logOP.Name)                                                         // create a sub scope for this summary.
+		tag := op.Const(ss, logOP.Name)                                                        // create a tag for the summary.
+		esSess.modelSummaryWriterOps[i] = logOP.OPfunc(ss, writer, tag, esSess.readGeneration) // call the func which the modelDef gave us to get the summary writer operation.
+	}
 	esSess.graph, err = s.Finalize()
 	if err != nil {
 		return
@@ -286,7 +264,7 @@ func NewSession(s *op.Scope, md ModelDef, lossFunc Loss, accuracyFunc Accuracy, 
 	if err != nil {
 		return
 	}
-	_, err = esSess.sess.Run(nil, nil, append(append(initVars, initGeneration), initOPs...))
+	_, err = esSess.sess.Run(nil, nil, append(append(initVars, initGeneration, createSummaryWriter), initOPs...))
 	if err != nil {
 		return
 	}

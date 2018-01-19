@@ -246,7 +246,7 @@ func NewSession(s *op.Scope,
 
 	testScope := s.SubScope("test")
 	testActual, logOPs := md.Model(testScope.SubScope("model"), esSess.readVars, testInputs)
-	esSess.accuracy = accuracyFunc(testScope.SubScope("accurecy"), testActual, testTargets)
+	esSess.accuracy = accuracyFunc(testScope.SubScope("accuracy"), testActual, testTargets)
 	accuracyTag := op.Const(testScope.SubScope("summary_tag"), "accuracy")
 	esSess.accuracySummaryWriter = op.WriteScalarSummary(testScope, writer, esSess.readGeneration, accuracyTag, esSess.accuracy)
 

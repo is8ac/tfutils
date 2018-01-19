@@ -101,3 +101,12 @@ func DummyModel(outputSize int64) (model es.ModelDef) {
 	}
 	return
 }
+
+// Nil is a ModelDef which has no parameters, and does nothing
+var Nil = es.ModelDef{
+	ParamDefs: []es.ParamDef{},
+	Model: func(s *op.Scope, vars []tf.Output, inputs tf.Output) (outputs tf.Output, tbOPs []tb.LogOP) {
+		outputs = inputs
+		return
+	},
+}

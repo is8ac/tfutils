@@ -10,7 +10,7 @@ import (
 // Expects actual to be onehot, and target to be indexes.
 func Percent(s *op.Scope, actual, target tf.Output) (accuracy tf.Output) {
 	actualLabels := op.Cast(s.SubScope("actual"),
-		op.ArgMax(s, actual, op.Const(s.SubScope("argmax_dim"), int32(1)), op.ArgMaxOutputType(tf.Int32)),
+		op.ArgMax(s, actual, op.Const(s.SubScope("argmax_dim"), int32(-1)), op.ArgMaxOutputType(tf.Int32)),
 		target.DataType(),
 	)
 	correct := op.Equal(s, actualLabels, target)

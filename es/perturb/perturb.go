@@ -38,7 +38,12 @@ func MakeSlice(stdevVal float32) es.PerturbFunc {
 		inputShape := op.Shape(s.SubScope("input"), input, op.ShapeOutType(tf.Int32))
 		noiseShape := op.Add(s.SubScope("shape"), inputShape, numOutputs)
 		seed := op.Pack(s, []tf.Output{generation, op.Const(s.SubScope("seed"), globalSeed)})
-		oneNoise := op.StatelessRandomNormal(s, noiseShape, seed, op.StatelessRandomNormalDtype(input.DataType()))
+		oneNoise := tf.Output{}
+		if input.DataType() == tf.Bfloat16 {
+			oneNoise = op.Cast(s.SubScope("fix_bfloat16"), op.StatelessRandomNormal(s, noiseShape, seed, op.StatelessRandomNormalDtype(tf.Float)), tf.Bfloat16)
+		} else {
+			oneNoise = op.StatelessRandomNormal(s, noiseShape, seed, op.StatelessRandomNormalDtype(input.DataType()))
+		}
 		stdev := op.Cast(s, op.Const(s.SubScope("stdev"), stdevVal), input.DataType())
 		noise := op.Mul(s, oneNoise, stdev)
 		return func(subS *op.Scope, index tf.Output) (output tf.Output) {

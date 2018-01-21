@@ -61,7 +61,7 @@ func main() {
 		seed,                                      // seed for repeatability
 		"tb_logs",                                 // dir in which to store tensorboard logs
 		"run8",                                    // run name
-	)
+	).Finalize()
 	if err != nil {
 		panic(err)
 	}

@@ -34,7 +34,7 @@ func TestNewSession(t *testing.T) {
 	s := op.NewScope()
 	inputs := op.Const(s.SubScope("inputs"), [][]float32{[]float32{1, 2}, []float32{3, 4}})
 	targets := op.Const(s.SubScope("targets"), [][]float32{[]float32{0, 1}, []float32{1, 0}})
-	esSess, err := NewSession(s.SubScope("main"), model, nilLoss, nilLoss, inputs, targets, inputs, targets, nil, 3, 42, "tb_logs", "test")
+	esSess, err := NewSession(s.SubScope("main"), model, nilLoss, nilLoss, inputs, targets, inputs, targets, nil, 3, 42, "tb_logs", "test").Finalize()
 	if err != nil {
 		panic(err)
 	}
@@ -55,12 +55,6 @@ func TestNewSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = esSess.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	s2 := op.NewScope()
-	frozenInput := op.Const(s2.SubScope("inputs"), [][]float32{[]float32{1, 2}, []float32{3, 4}})
-	_, err = esSess.Freeze(s2, frozenInput)
 	if err != nil {
 		t.Fatal(err)
 	}

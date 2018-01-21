@@ -13,7 +13,7 @@ import (
 )
 
 func TestSimpleRNN(t *testing.T) {
-	md := SimpleRNN(tf.Float, 3, 2)
+	md := RNN(tf.Float, 3, 2)
 	s := op.NewScope()
 	params := make([]tf.Output, len(md.ParamDefs))
 	for i, vd := range md.ParamDefs {
@@ -27,7 +27,7 @@ func TestSimpleRNN(t *testing.T) {
 	}
 	x := op.Const(s.SubScope("x"), [][]float32{[]float32{1, 2, 3}, []float32{1, 2, 3}, []float32{1, 2, 3}, []float32{1, 2, 3}})
 	h0 := op.Const(s.SubScope("h0"), [][]float32{[]float32{0, 0}, []float32{0, 0}, []float32{0, 0}, []float32{0, 0}})
-	h, _, _ := md.Model(s.SubScope("model"), params, x, h0, []tf.Output{})
+	_, h, _, _ := md.Model(s.SubScope("model"), params, x, h0, tf.Output{})
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -49,8 +49,8 @@ func TestSimpleRNN(t *testing.T) {
 	}
 }
 
-func TestUnroll(t *testing.T) {
-	md := Unroll(3, SimpleRNN(tf.Float, 5, 2), models.Nil, models.Nil)
+func testUnroll(t *testing.T, cell CellDef) {
+	md := Unroll(3, cell)
 	s := op.NewScope()
 	// `[seqLen, batchSize, inputSize]`
 	inputs := op.Const(s.SubScope("inputs"), [][][]float32{
@@ -66,7 +66,7 @@ func TestUnroll(t *testing.T) {
 		[][]float32{[]float32{1, 2}, []float32{3, 4}, []float32{3, 4}},
 	})
 	testTargets := op.Const(s.SubScope("targets"), [][]int32{[]int32{1, 0, 1}, []int32{1, 0, 1}, []int32{1, 0, 1}, []int32{1, 0, 1}})
-	esSess, err := es.NewSession(s.SubScope("main"), md, loss.SoftmaxSqrDif, accuracy.Percent, inputs, targets, inputs, testTargets, nil, 3, 42, "tb_logs", "")
+	esSess, err := es.NewSession(s.SubScope("main"), md, loss.SoftmaxSqrDif, accuracy.Percent, inputs, targets, inputs, testTargets, nil, 3, 42, "tb_logs", "").Finalize()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,4 +75,16 @@ func TestUnroll(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRNN(t *testing.T) {
+	testUnroll(t, RNN(tf.Float, 5, 2))
+}
+
+func TestAddPost(t *testing.T) {
+	testUnroll(t, RNN(tf.Float, 5, 3).AddPost(models.SingleLayerNN(tf.Float, 3, 2)))
+}
+
+func TestLSTM(t *testing.T) {
+	testUnroll(t, LSTM(tf.Float, 5, 2))
 }

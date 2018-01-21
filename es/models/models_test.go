@@ -13,7 +13,7 @@ import (
 	"github.com/tensorflow/tensorflow/tensorflow/go/op"
 )
 
-func testModelMNIST(modelDef es.ModelDef, dType tf.DataType) (err error) {
+func testModelMNIST(t *testing.T, modelDef es.ModelDef, dType tf.DataType) {
 	s := op.NewScope()
 
 	images, labels, init := mnist.NextBatch(s.SubScope("next_batch"),
@@ -31,19 +31,19 @@ func testModelMNIST(modelDef es.ModelDef, dType tf.DataType) (err error) {
 		initTestLabels,
 		initTestImages,
 	}
-	esSess, err := es.NewSession(s.SubScope("main"), modelDef, loss.SoftmaxSqrDif, accuracy.Percent, images, labels, testImages, testLabels, initOPs, 5, 52, "tb_logs", "")
+	esSess, err := es.NewSession(s.SubScope("main"), modelDef, loss.SoftmaxSqrDif, accuracy.Percent, images, labels, testImages, testLabels, initOPs, 5, 52, "tb_logs", "").Finalize()
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 	var bestIndex int32
 	for i := 0; i < 100; i++ {
 		bestIndex, err = esSess.BestIndex()
 		if err != nil {
-			return
+			t.Fatal(err)
 		}
 		err = esSess.Perturb(bestIndex)
 		if err != nil {
-			return
+			t.Fatal(err)
 		}
 	}
 	return
@@ -57,8 +57,6 @@ func TestTwoLayerNN(t *testing.T) {
 	}
 	dTypes := []tf.DataType{tf.Half, tf.Float, tf.Double}
 	for _, dType := range dTypes {
-		if err := testModelMNIST(TwoLayerNN(dType, 28*28, 5, 10), dType); err != nil {
-			t.Fatal(err)
-		}
+		testModelMNIST(t, TwoLayerNN(dType, 28*28, 5, 10), dType)
 	}
 }

@@ -2,6 +2,8 @@
 package models
 
 import (
+	"strconv"
+
 	"github.com/is8ac/tfutils"
 	"github.com/is8ac/tfutils/es"
 	"github.com/is8ac/tfutils/es/perturb"
@@ -45,16 +47,19 @@ func SingleLayerNN(DstT tf.DataType, inputSize, outputSize int64) (model es.Mode
 		es.ParamDef{Name: "biases", ZeroVal: tfutils.Zero(DstT), Shape: tf.MakeShape(outputSize), PerturbFunc: perturb.MakeSlice(0.003)},
 	}
 
-	model.Model = func(s *op.Scope, vars []tf.Output, input tf.Output) (output tf.Output, tbOPs []tb.LogOP) {
-		matmuled := op.MatMul(s, input, vars[0])
-		output = op.Add(s, vars[1], matmuled)
+	model.Model = func(s *op.Scope, params []tf.Output, input tf.Output) (output tf.Output, tbOPs []tb.LogOP) {
+		if len(params) != len(model.ParamDefs) {
+			panic("wanted " + strconv.Itoa(len(params)) + " params, got " + strconv.Itoa(len(model.ParamDefs)))
+		}
+		matmuled := op.MatMul(s, input, params[0])
+		output = op.Add(s, params[1], matmuled)
 		tbOPs = []tb.LogOP{
 			tb.MakeHistLogOP(output, "output"),
-			tb.MakeHistLogOP(vars[0], "weights"),
-			tb.MakeHistLogOP(vars[1], "biases"),
+			tb.MakeHistLogOP(params[0], "weights"),
+			tb.MakeHistLogOP(params[1], "biases"),
 			tb.MakeHistLogOP(matmuled, "matmuled"),
 			tb.MakeHistLogOP(input, "input"),
-			tb.MakePlusMinusOneImageLogOP(vars[0], "weights_image"),
+			tb.MakePlusMinusOneImageLogOP(params[0], "weights_image"),
 		}
 		return
 	}

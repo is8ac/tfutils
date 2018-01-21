@@ -13,7 +13,7 @@ func Percent(s *op.Scope, actual, target tf.Output) (accuracy tf.Output) {
 		op.ArgMax(s, actual, op.Const(s.SubScope("argmax_dim"), int32(-1)), op.ArgMaxOutputType(tf.Int32)),
 		target.DataType(),
 	)
-	correct := op.Equal(s, actualLabels, target)
+	correct := op.Reshape(s, op.Equal(s, actualLabels, target), op.Const(s.SubScope("all"), []int32{-1}))
 	accuracy = op.Mean(s, op.Cast(s.SubScope("accuracy"), correct, tf.Float), op.Const(s.SubScope("mean_dim"), int32(0)))
 	return
 }

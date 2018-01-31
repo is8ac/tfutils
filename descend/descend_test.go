@@ -17,7 +17,7 @@ func TestNewSeedSM(t *testing.T) {
 	// make the first state machine
 	s1 := op.NewScope()
 	noise := MakeNoise(0.003)
-	makeSM1, _, smParams1 := NewSeedSM(s1.SubScope("sm"), noise, paramDefs)
+	makeSM1, _, smParams1 := NewSeedSM(s1.SubScope("sm"), noise, paramDefs, 5)
 	graph1, err := s1.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -33,7 +33,7 @@ func TestNewSeedSM(t *testing.T) {
 
 	// make the first state machine
 	s2 := op.NewScope()
-	makeSM2, _, smParams2 := NewSeedSM(s2.SubScope("sm"), noise, paramDefs)
+	makeSM2, _, smParams2 := NewSeedSM(s2.SubScope("sm"), noise, paramDefs, 5)
 	graph2, err := s2.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -108,8 +108,8 @@ func TestNewBestSeed(t *testing.T) {
 	}
 	s := op.NewScope()
 	noise := MakeNoise(0.003)
-	makeSM, generation, params := NewSeedSM(s.SubScope("sm"), noise, paramDefs)
-	makeBestSeed := NewBestSeed(s.SubScope("best_seed"), params, lossFunc, noise, 30, generation)
+	makeSM, newBestSeed, _ := NewSeedSM(s.SubScope("sm"), noise, paramDefs, 30)
+	makeBestSeed := newBestSeed(lossFunc)
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
@@ -155,9 +155,9 @@ func TestSeedSMtrain(t *testing.T) {
 		ParamDef{Name: "weight", Init: tfutils.Zero(tf.Float, tf.ScalarShape())},
 		ParamDef{Name: "bias", Init: tfutils.Zero(tf.Float, tf.ScalarShape())},
 	}
-	noise := MakeNoise(0.003)                                                                    // make the func to make noise
-	makeSM, generation, params := NewSeedSM(s.SubScope("sm"), noise, paramDefs)                  // make the state machine.
-	makeBestSeed := NewBestSeed(s.SubScope("best_seed"), params, lossFunc, noise, 5, generation) // make the ops to get calculate the best seed.
+	noise := MakeNoise(0.003)                                                       // make the func to make noise
+	makeSM, newBestSeed, params := NewSeedSM(s.SubScope("sm"), noise, paramDefs, 5) // make the state machine.
+	makeBestSeed := newBestSeed(lossFunc)                                           // make the ops to get calculate the best seed.
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)

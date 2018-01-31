@@ -46,11 +46,11 @@ func main() {
 		initTestImages,
 	}
 
-	noise := descend.MakeNoise(0.003)                                                                     // make the func to make noise
-	paramDefs, lossFunc, makeFinalizeAccuracy := models.MakeSingleLayerNN(images, labels)                 // create the funcs to evaluate loss
-	makeSM, generation, params := descend.NewSeedSM(s.SubScope("sm"), noise, paramDefs)                   // make the state machine.
-	makeBestSeed := descend.NewBestSeed(s.SubScope("best_seed"), params, lossFunc, noise, 50, generation) // make the ops to get calculate the best seed.
-	finalizeAccuracy := makeFinalizeAccuracy(s.SubScope("accuracy"), params, testImages, testLabels)      // give the accuracy func params and some test data.
+	noise := descend.MakeNoise(0.003)                                                                // make the func to make noise
+	paramDefs, lossFunc, makeFinalizeAccuracy := models.MakeSingleLayerNN(images, labels)            // create the funcs to evaluate loss
+	makeSM, newBestSeed, params := descend.NewSeedSM(s.SubScope("sm"), noise, paramDefs, 50)         // make the state machine.
+	makeBestSeed := newBestSeed(lossFunc)                                                            // make the ops to get calculate the best seed.
+	finalizeAccuracy := makeFinalizeAccuracy(s.SubScope("accuracy"), params, testImages, testLabels) // give the accuracy func params and some test data.
 	graph, err := s.Finalize()
 	if err != nil {
 		panic(err)
@@ -72,7 +72,7 @@ func main() {
 		panic(err)
 	}
 	accuracy := finalizeAccuracy(sess) // finally. make the accuracy func.
-	for i := 0; i < 10000; i++ {       // for 100 generations,
+	for i := 0; i < 1000; i++ {        // for 1000 generations,
 		seed, err := bestSeed()
 		if err != nil {
 			panic(err)

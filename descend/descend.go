@@ -94,14 +94,22 @@ func (sm *SeedSM) Rewind() (err error) {
 // NewSeedSM creates TF OPs for a state machine to move through parameter space according to the seed which is give and the generation.
 // Use perturb and deperturb to move forward and rewind.
 // Untill https://github.com/tensorflow/tensorflow/issues/16464 is resolved, you must pull on incGen and decGen _after_ pulling on perturb or deperturb.
-func NewSeedSM(s *op.Scope, noise NoiseFunc, paramDefs []ParamDef) (makeSeedSM func(*tf.Session) (SeedSM, error), generation tf.Output, params []tf.Output) {
+func NewSeedSM(s *op.Scope,
+	noise NoiseFunc,
+	paramDefs []ParamDef,
+	numSeeds int,
+) (
+	makeSeedSM func(*tf.Session) (SeedSM, error),
+	newBestSeed func(LossFunc) func(*tf.Session) (func() (int64, error), error),
+	params []tf.Output,
+) {
 	gen := op.Placeholder(s.SubScope("gen"), tf.Int64, op.PlaceholderShape(tf.ScalarShape()))
 	seed := op.Placeholder(s.SubScope("seed"), tf.Int64, op.PlaceholderShape(tf.ScalarShape()))
 	generationScope := s.SubScope("generation")
 	generationVar := op.VarHandleOp(generationScope, tf.Int64, tf.ScalarShape(), op.VarHandleOpSharedName("generation"))
 	updateGeneration := op.AssignVariableOp(generationScope, generationVar, gen)
 	initGeneration := op.AssignVariableOp(generationScope.SubScope("init"), generationVar, op.Const(generationScope.SubScope("zero"), int64(0)))
-	generation = op.ReadVariableOp(generationScope, generationVar, tf.Int64)
+	generation := op.ReadVariableOp(generationScope, generationVar, tf.Int64)
 
 	// Now we create slices to hold various things for each param.
 	paramCount := len(paramDefs)                    // number of params
@@ -135,51 +143,40 @@ func NewSeedSM(s *op.Scope, noise NoiseFunc, paramDefs []ParamDef) (makeSeedSM f
 		}
 		return
 	}
-	return
-}
-
-// NewBestSeed creates the OPs to search for good seeds from the current params.
-func NewBestSeed(s *op.Scope,
-	params []tf.Output,
-	lossFunc LossFunc,
-	noise NoiseFunc,
-	numSeeds int,
-	generation tf.Output,
-) (
-	makeBestSeed func(*tf.Session) (func() (int64, error), error),
-) {
-	// Now we create slices to hold various things for each param.
-	paramCount := len(params) // number of params
-	seedLosses := make([]tf.Output, numSeeds)
-	one := op.Const(s.SubScope("one"), int64(1))
-	// for each seed,
-	for seedIndex := 0; seedIndex < numSeeds; seedIndex++ {
-		seedScope := s.SubScope("child" + strconv.Itoa(seedIndex))
-		seed := op.Const(seedScope.SubScope("seed"), int64(seedIndex))
-		perturbedParams := make([]tf.Output, paramCount)
-		// for each param,
-		for i, param := range params {
-			paramScope := seedScope.SubScope("param_" + strconv.Itoa(i))
-			paramShape := op.Shape(paramScope.SubScope("input"), param, op.ShapeOutType(tf.Int32))
-			paramIndex := op.Const(paramScope.SubScope("param_index"), int64(i))
-			paramSeed := op.Add(paramScope.SubScope("inc_seed"), seed, paramIndex)
-			seedNoise := noise(paramScope.SubScope("perturb_noise"), paramShape, paramSeed, op.Add(paramScope.SubScope("inc_gen"), generation, one))
-			perturbedParam := op.Add(paramScope, params[i], seedNoise)
-			//perturbedParam = op.Print(paramScope, seedNoise, []tf.Output{seed, paramSeed, generation, perturbedParam}, op.PrintMessage("params"))
-			perturbedParams[i] = perturbedParam
+	newBestSeed = func(lossFunc LossFunc) (makeBestSeed func(*tf.Session) (func() (int64, error), error)) {
+		bestSeedScope := s.SubScope("beste_seed")
+		// Now we create slices to hold various things for each param.
+		paramCount := len(params) // number of params
+		seedLosses := make([]tf.Output, numSeeds)
+		one := op.Const(bestSeedScope.SubScope("one"), int64(1))
+		// for each seed,
+		for seedIndex := 0; seedIndex < numSeeds; seedIndex++ {
+			seedScope := bestSeedScope.SubScope("child" + strconv.Itoa(seedIndex))
+			seed := op.Const(seedScope.SubScope("seed"), int64(seedIndex))
+			perturbedParams := make([]tf.Output, paramCount)
+			// for each param,
+			for i, param := range params {
+				paramScope := seedScope.SubScope("param_" + strconv.Itoa(i))
+				paramShape := op.Shape(paramScope.SubScope("input"), param, op.ShapeOutType(tf.Int32))
+				paramIndex := op.Const(paramScope.SubScope("param_index"), int64(i))
+				paramSeed := op.Add(paramScope.SubScope("inc_seed"), seed, paramIndex)
+				seedNoise := noise(paramScope.SubScope("perturb_noise"), paramShape, paramSeed, op.Add(paramScope.SubScope("inc_gen"), generation, one))
+				perturbedParam := op.Add(paramScope, params[i], seedNoise)
+				perturbedParams[i] = perturbedParam
+			}
+			seedLosses[seedIndex] = lossFunc(seedScope.SubScope("model"), perturbedParams)
 		}
-		seedLosses[seedIndex] = lossFunc(seedScope.SubScope("model"), perturbedParams)
-	}
-	losses := op.Pack(s.SubScope("pack"), seedLosses)
-	//losses = op.Print(s, losses, []tf.Output{losses}, op.PrintMessage("losses"), op.PrintSummarize(10))
-	lowestSeed := op.ArgMin(s, losses, op.Const(s.SubScope("argmin_dims"), int32(0)), op.ArgMinOutputType(tf.Int64))
-	makeBestSeed = func(sess *tf.Session) (bestSeed func() (int64, error), err error) {
-		bestSeed = func() (seed int64, err error) {
-			results, err := sess.Run(nil, []tf.Output{lowestSeed}, nil)
-			if err != nil {
+		losses := op.Pack(bestSeedScope.SubScope("pack"), seedLosses)
+		lowestSeed := op.ArgMin(bestSeedScope, losses, op.Const(bestSeedScope.SubScope("argmin_dims"), int32(0)), op.ArgMinOutputType(tf.Int64))
+		makeBestSeed = func(sess *tf.Session) (bestSeed func() (int64, error), err error) {
+			bestSeed = func() (seed int64, err error) {
+				results, err := sess.Run(nil, []tf.Output{lowestSeed}, nil)
+				if err != nil {
+					return
+				}
+				seed = results[0].Value().(int64)
 				return
 			}
-			seed = results[0].Value().(int64)
 			return
 		}
 		return

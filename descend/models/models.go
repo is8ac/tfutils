@@ -12,7 +12,7 @@ import (
 func MakeSingleLayerNN(inputs, targets tf.Output) (
 	paramDefs []descend.ParamDef, // list of param tensors to have the state machine to create.
 	lossFunc descend.LossFunc, // func for the state machine to evaluate parameters.
-	makeFinalizeAccuracy func(*op.Scope, []tf.Output, tf.Output, tf.Output) func(*tf.Session) func() (float32, error), // func to make a func to make a func compute accuracy.
+	makeFinalizeAccuracy func(*op.Scope, []tf.Output, tf.Output, tf.Output) (func(*tf.Session) func() (float32, error), tf.Output), // func to make a func to make a func compute accuracy.
 ) {
 	inputDims, err := inputs.Shape().ToSlice()
 	if err != nil {
@@ -42,12 +42,18 @@ func MakeSingleLayerNN(inputs, targets tf.Output) (
 		loss = op.Mean(s, sums, op.Const(s.SubScope("mean_reduce_dims"), []int32{0}))
 		return
 	}
-	makeFinalizeAccuracy = func(s *op.Scope, params []tf.Output, testInputs, testTargets tf.Output) func(*tf.Session) func() (float32, error) {
+	makeFinalizeAccuracy = func(s *op.Scope,
+		params []tf.Output,
+		testInputs, testTargets tf.Output,
+	) (
+		finalizeAccuracy func(*tf.Session) func() (float32, error),
+		accuracy tf.Output,
+	) {
 		actual := model(s, params, testInputs)
 		actualLabels := op.ArgMax(s, actual, op.Const(s.SubScope("argmax_dim"), int32(-1)), op.ArgMaxOutputType(tf.Int32))
 		correct := op.Reshape(s, op.Equal(s, actualLabels, testTargets), op.Const(s.SubScope("all"), []int32{-1}))
-		accuracy := op.Mean(s, op.Cast(s.SubScope("accuracy"), correct, tf.Float), op.Const(s.SubScope("mean_dim"), int32(0)))
-		return func(sess *tf.Session) func() (float32, error) {
+		accuracy = op.Mean(s, op.Cast(s.SubScope("accuracy"), correct, tf.Float), op.Const(s.SubScope("mean_dim"), int32(0)))
+		finalizeAccuracy = func(sess *tf.Session) func() (float32, error) {
 			return func() (acc float32, err error) {
 				results, err := sess.Run(nil, []tf.Output{accuracy}, nil)
 				if err != nil {
@@ -57,6 +63,7 @@ func MakeSingleLayerNN(inputs, targets tf.Output) (
 				return
 			}
 		}
+		return
 	}
 	return
 }

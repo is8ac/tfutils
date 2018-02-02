@@ -21,7 +21,7 @@ func TestSingleLayer(t *testing.T) {
 			)
 		},
 		mnist.InitOneHotLabels(tf.Float), // Let's also onehot encode the labels when training.
-		400, // Evaluate the model on 300 images each iteration.
+		400, // Evaluate the model on 400 images each iteration.
 		42,  // seed for repeatability
 	)
 	// Now we need to get test data to measure accuracy. We look at the whole test set, so no need for queues.
@@ -40,11 +40,11 @@ func TestSingleLayer(t *testing.T) {
 		initTestImages,
 	}
 
-	noise := descend.MakeNoise(0.003)                                                                     // make the func to make noise
-	paramDefs, lossFunc, makeFinalizeAccuracy := MakeSingleLayerNN(images, labels)                        // create the funcs to evaluate loss
-	makeSM, generation, params := descend.NewSeedSM(s.SubScope("sm"), noise, paramDefs)                   // make the state machine.
-	makeBestSeed := descend.NewBestSeed(s.SubScope("best_seed"), params, lossFunc, noise, 50, generation) // make the ops to get calculate the best seed.
-	finalizeAccuracy := makeFinalizeAccuracy(s.SubScope("accuracy"), params, testImages, testLabels)      // give the accuracy func params and some test data.
+	noise := descend.MakeNoise(0.003)                                                                   // make the func to make noise
+	paramDefs, lossFunc, makeFinalizeAccuracy := MakeSingleLayerNN(images, labels)                      // create the funcs to evaluate loss
+	makeSM, newBestSeed, _, params := descend.NewSeedSM(s.SubScope("sm"), noise, paramDefs, 50)         // make the state machine.
+	makeBestSeed := newBestSeed(lossFunc)                                                               // make the ops to get calculate the best seed.
+	finalizeAccuracy, _ := makeFinalizeAccuracy(s.SubScope("accuracy"), params, testImages, testLabels) // give the accuracy func params and some test data.
 	graph, err := s.Finalize()
 	if err != nil {
 		t.Fatal(err)
